@@ -122,6 +122,17 @@ This allows deploying chasquid behind a HAProxy server, as the address
 information is preserved, and SPF checks can be performed properly.
 Default: C<false>.
 
+=item B<smarthost_url> (string):
+
+Smarthost URL. If set, we will send all received email to this location,
+including local mail.
+
+It is of the form C<smtp://user:password@host:port> for SMTP (and STARTTLS
+will be forcefully negotiated), or C<tls://user:password@host:port> for SMTP
+over TLS (usually port 465).
+
+B<EXPERIMENTAL> for now, can change in backwards-incompatible ways.
+
 =back
 
 =head1 SEE ALSO

@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
 
 	"blitiri.com.ar/go/log"
@@ -127,6 +128,9 @@ func override(c, o *Config) {
 	if o.HaproxyIncoming {
 		c.HaproxyIncoming = true
 	}
+	if o.SmarthostUrl != "" {
+		c.SmarthostUrl = o.SmarthostUrl
+	}
 }
 
 // LogConfig logs the given configuration, in a human-friendly way.
@@ -146,4 +150,15 @@ func LogConfig(c *Config) {
 	log.Infof("  Dovecot auth: %v (%q, %q)",
 		c.DovecotAuth, c.DovecotUserdbPath, c.DovecotClientPath)
 	log.Infof("  HAProxy incoming: %v", c.HaproxyIncoming)
+
+	// Avoid logging the password for the smarthost URL.
+	smurl, err := url.Parse(c.SmarthostUrl)
+	if err == nil {
+		if smurl.User != nil {
+			smurl.User = url.User(smurl.User.Username())
+		}
+		log.Infof("  Smarthost: %s", smurl)
+	} else {
+		log.Infof("  Smarthost: <invalid URL>")
+	}
 }

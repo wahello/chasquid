@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -160,16 +161,30 @@ func main() {
 	}
 	go stsCache.PeriodicallyRefresh(context.Background())
 
-	localC := &courier.MDA{
-		Binary:  conf.MailDeliveryAgentBin,
-		Args:    conf.MailDeliveryAgentArgs,
-		Timeout: 30 * time.Second,
+	var localC, remoteC courier.Courier
+	if conf.SmarthostUrl != "" {
+		smurl, err := url.Parse(conf.SmarthostUrl)
+		if err != nil {
+			log.Fatalf("Invalid smarthost url: %v", err)
+		}
+		remoteC = &courier.SmartHost{
+			HelloDomain: conf.Hostname,
+			URL:         *smurl,
+		}
+		localC = remoteC
+	} else {
+		localC = &courier.MDA{
+			Binary:  conf.MailDeliveryAgentBin,
+			Args:    conf.MailDeliveryAgentArgs,
+			Timeout: 30 * time.Second,
+		}
+		remoteC = &courier.SMTP{
+			HelloDomain: conf.Hostname,
+			Dinfo:       dinfo,
+			STSCache:    stsCache,
+		}
 	}
-	remoteC := &courier.SMTP{
-		HelloDomain: conf.Hostname,
-		Dinfo:       dinfo,
-		STSCache:    stsCache,
-	}
+
 	s.InitQueue(conf.DataDir+"/queue", localC, remoteC)
 
 	// Load the addresses and listeners.

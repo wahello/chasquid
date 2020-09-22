@@ -100,4 +100,11 @@ message Config {
 	// This allows deploying chasquid behind a HAProxy server, as the
 	// address information is preserved.
 	bool haproxy_incoming = 16;
+
+	// Smarthost URL. If set, we will send all received email to this
+	// location, including local mail.
+	// It is of the form "smtp://user:password@host:port" for SMTP (and
+	// STARTTLS will be forcefully negotiated), or
+	// "tls://user:password@host:port" for SMTP over TLS (usually port 465).
+	string smarthost_url = 17;
 }

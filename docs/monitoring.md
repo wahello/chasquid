@@ -76,6 +76,12 @@ List of exported variables:
   count of STS security checks on outgoing connections, by result (pass/fail).
 - **chasquid/smtpOut/tlsCount** (status -> counter)  
   count of TLS status (insecure TLS/secure TLS/plain) on outgoing connections.
+- **chasquid/smarthostOut/attempts** (counter)  
+  count of attempts to deliver via smarthost.
+- **chasquid/smarthostOut/errors** (reason -> counter)  
+  count of smarthost delivery errors, per reason.
+- **chasquid/smarthostOut/success** (counter)  
+  count of successful delivering via smarthost.
 - **chasquid/sourceDateStr** (string)  
   timestamp when the binary was built, in human readable format.
 - **chasquid/sourceDateTimestamp** (int)  
