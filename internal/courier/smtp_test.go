@@ -1,12 +1,9 @@
 package courier
 
 import (
-	"bufio"
 	"fmt"
 	"net"
-	"net/textproto"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -39,54 +36,6 @@ func newSMTP(t *testing.T) (*SMTP, string) {
 	return &SMTP{"hello", dinfo, nil}, dir
 }
 
-// Fake server, to test SMTP out.
-func fakeServer(t *testing.T, responses map[string]string) (string, *sync.WaitGroup) {
-	l, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		t.Fatalf("fake server listen: %v", err)
-	}
-
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		defer l.Close()
-
-		c, err := l.Accept()
-		if err != nil {
-			panic(err)
-		}
-		defer c.Close()
-
-		t.Logf("fakeServer got connection")
-
-		r := textproto.NewReader(bufio.NewReader(c))
-		c.Write([]byte(responses["_welcome"]))
-		for {
-			line, err := r.ReadLine()
-			if err != nil {
-				t.Logf("fakeServer exiting: %v\n", err)
-				return
-			}
-
-			t.Logf("fakeServer read: %q\n", line)
-			c.Write([]byte(responses[line]))
-
-			if line == "DATA" {
-				_, err = r.ReadDotBytes()
-				if err != nil {
-					t.Logf("fakeServer exiting: %v\n", err)
-					return
-				}
-				c.Write([]byte(responses["_DATA"]))
-			}
-		}
-	}()
-
-	return l.Addr().String(), wg
-}
-
 func TestSMTP(t *testing.T) {
 	// Shorten the total timeout, so the test fails quickly if the protocol
 	// gets stuck.
@@ -101,8 +50,8 @@ func TestSMTP(t *testing.T) {
 		"_DATA":             "250 data ok\n",
 		"QUIT":              "250 quit ok\n",
 	}
-	addr, wg := fakeServer(t, responses)
-	host, port, _ := net.SplitHostPort(addr)
+	srv := newFakeServer(t, responses)
+	host, port, _ := net.SplitHostPort(srv.addr)
 
 	// Put a non-existing host first, so we check that if the first host
 	// doesn't work, we try with the rest.
@@ -123,7 +72,7 @@ func TestSMTP(t *testing.T) {
 		t.Errorf("deliver failed: %v", err)
 	}
 
-	wg.Wait()
+	srv.wg.Wait()
 }
 
 func TestSMTPErrors(t *testing.T) {
@@ -131,50 +80,66 @@ func TestSMTPErrors(t *testing.T) {
 	// gets stuck.
 	smtpTotalTimeout = 1 * time.Second
 
-	responses := []map[string]string{
+	cases := []struct {
+		responses map[string]string
+		errPrefix string
+	}{
 		// First test: hang response, should fail due to timeout.
 		{
-			"_welcome": "220 no newline",
+			makeResp("_welcome", "220 no newline"),
+			"",
 		},
 
 		// MAIL FROM not allowed.
 		{
-			"_welcome":          "220 mail from not allowed\n",
-			"EHLO hello":        "250 ehlo ok\n",
-			"MAIL FROM:<me@me>": "501 mail error\n",
+			makeResp(
+				"_welcome", "220 mail from not allowed\n",
+				"EHLO hello", "250 ehlo ok\n",
+				"MAIL FROM:<me@me>", "501 mail error\n",
+			),
+			"MAIL+RCPT 501 mail error",
 		},
 
 		// RCPT TO not allowed.
 		{
-			"_welcome":          "220 rcpt to not allowed\n",
-			"EHLO hello":        "250 ehlo ok\n",
-			"MAIL FROM:<me@me>": "250 mail ok\n",
-			"RCPT TO:<to@to>":   "501 rcpt error\n",
+			makeResp(
+				"_welcome", "220 rcpt to not allowed\n",
+				"EHLO hello", "250 ehlo ok\n",
+				"MAIL FROM:<me@me>", "250 mail ok\n",
+				"RCPT TO:<to@to>", "501 rcpt error\n",
+			),
+			"MAIL+RCPT 501 rcpt error",
 		},
 
 		// DATA error.
 		{
-			"_welcome":          "220 data error\n",
-			"EHLO hello":        "250 ehlo ok\n",
-			"MAIL FROM:<me@me>": "250 mail ok\n",
-			"RCPT TO:<to@to>":   "250 rcpt ok\n",
-			"DATA":              "554 data error\n",
+			makeResp(
+				"_welcome", "220 data error\n",
+				"EHLO hello", "250 ehlo ok\n",
+				"MAIL FROM:<me@me>", "250 mail ok\n",
+				"RCPT TO:<to@to>", "250 rcpt ok\n",
+				"DATA", "554 data error\n",
+			),
+			"DATA 554 data error",
 		},
 
 		// DATA response error.
 		{
-			"_welcome":          "220 data response error\n",
-			"EHLO hello":        "250 ehlo ok\n",
-			"MAIL FROM:<me@me>": "250 mail ok\n",
-			"RCPT TO:<to@to>":   "250 rcpt ok\n",
-			"DATA":              "354 send data\n",
-			"_DATA":             "551 data response error\n",
+			makeResp(
+				"_welcome", "220 data error\n",
+				"EHLO hello", "250 ehlo ok\n",
+				"MAIL FROM:<me@me>", "250 mail ok\n",
+				"RCPT TO:<to@to>", "250 rcpt ok\n",
+				"DATA", "354 send data\n",
+				"_DATA", "551 data response error\n",
+			),
+			"DATA closing 551 data response error",
 		},
 	}
 
-	for _, rs := range responses {
-		addr, wg := fakeServer(t, rs)
-		host, port, _ := net.SplitHostPort(addr)
+	for _, c := range cases {
+		srv := newFakeServer(t, c.responses)
+		host, port, _ := net.SplitHostPort(srv.addr)
 
 		testMX["to"] = []*net.MX{{Host: host, Pref: 10}}
 		*smtpPort = port
@@ -182,12 +147,20 @@ func TestSMTPErrors(t *testing.T) {
 		s, tmpDir := newSMTP(t)
 		defer testlib.RemoveIfOk(t, tmpDir)
 		err, _ := s.Deliver("me@me", "to@to", []byte("data"))
+
 		if err == nil {
-			t.Errorf("deliver not failed in case %q: %v", rs["_welcome"], err)
+			t.Errorf("deliver not failed in case %q: %v",
+				c.responses["_welcome"], err)
+			continue
 		}
 		t.Logf("failed as expected: %v", err)
 
-		wg.Wait()
+		if !strings.HasPrefix(err.Error(), c.errPrefix) {
+			t.Errorf("expected error prefix %q, got %q",
+				c.errPrefix, err)
+		}
+
+		srv.wg.Wait()
 	}
 }
 
